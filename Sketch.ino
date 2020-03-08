@@ -1,4 +1,19 @@
-
+//======================================================================
+//
+//  Keep Talking and Arduino Explodes!
+//
+//======================================================================
+//
+//  version 0.3.0
+//
+//  Goal for this version: Complete Game Master, enabling tracking of
+//    module successes, strikes and game win/lose conditions.
+//
+//======================================================================
+//
+//  Modules supported: Button, Simple wires.
+//
+//======================================================================
 
 //**********************************************************************
 // LIBRARIES
@@ -19,51 +34,75 @@ byte pin_buzzer = 2;
 byte pin_lcd_d = 3;
 byte pin_lcd_l = 4;
 byte pin_lcd_c = 5;
-byte pin_button_button = 9;
-byte pin_button_led_r = 10;
-byte pin_button_led_g = 11;
-byte pin_button_led_b = 12;
-byte pin_swires_d = 6;
-byte pin_swires_l = 7;
-byte pin_swires_c = 8;
+//byte pin_button_button = 31;
+//byte pin_button_led_r = 29;
+//byte pin_button_led_g = 27;
+//byte pin_button_led_b = 25;
+//byte pin_swires_d = 53;
+//byte pin_swires_l = 51;
+//byte pin_swires_c = 49;
+byte ind_car_led = 7;
+byte ind_frk_led = 8;
 
 Adafruit_7segment timerdisp = Adafruit_7segment();
 LiquidCrystal595 lcd(pin_lcd_d, pin_lcd_l, pin_lcd_c); // Data pin, latch pin, clock pin
 
 byte gamemode = 0;
 
-//Track allocation of pins, as inputs or outputs
-//byte pinsi[5][4]; // Set max number of modules to 6, max number of pins per module to 5.
-//byte pinso[5][4]; // Set max number of modules to 6, max number of pins per module to 5.
-//byte inputstates[5][4]; //Set array of output pin values to be able to track state changes.
-//byte inputchanges[5][4];
+/*
+  //Track allocation of pins, as inputs or outputs
+  byte pinsi[5][4]; // Set max number of modules to 6, max number of pins per module to 5.
+  byte pinso[5][4]; // Set max number of modules to 6, max number of pins per module to 5.
+  byte inputstates[5][4]; //Set array of output pin values to be able to track state changes.
+  byte inputchanges[5][4];
 
-// Pins dynamically set counting up from d pin #2, a pin #14
-byte thisdpin = 2;
-byte thisapin = 14;
-byte thismodule = 0;
+  // Pins dynamically set counting up from d pin #2, a pin #14
+  byte thisdpin = 2;
+  byte thisapin = 14;
+  byte thismodule = 0;
+*/
+
+// Module Game Master array - holds data for each module to be referenced/passed in functions
+byte module_master[6][8]; // First row reserved for timer/misc
+// First dimension: maximum number of modules, excluding timer
+// Second dimension: maximum number of arguments to define a module
+//
+// Module codes:      0         1        2          3
+//                No module   Timer    Button  Simple wires
+//
+//                         i =  0           1         2         3           4               5               6              7
+// Timer layout         = {module type,   buzzer , lcd data, lcd ltch,  lcd clock,     ind_car_led,     ind_frk_led}
+// Button layout        = {module type, completed, strike R, strike G, button input,      LED R,          LED G,         LED B}
+// Simple wires layout  = {module type, completed, strike R, strike G, register data, register latch,  register clock}
+// Keypad layout        = {module type, completed, strike R, strike G,  button 1,        button 2,       button 3,      button 4}
+// Simon says layout    = {module type, completed, strike R, strike G,  button R,        button Y,       button G,      button B}
+//
 
 long timeleft;
-int gamelength = 300; //seconds
+long gamelength = 300; //seconds
 long thismillis;
 long delta_t;
 char timestr[5] = "----";
-// byte strikenumber = 0;
-char sec_tick_over[1];
+byte strikenumber = 0;
+byte strikelimit = 3;
+char sec_tick_over;
 long buzz_timer;
 byte time_scale; // Quadruple the time scale: 4 = 1x speed (normal), 5 = 1.25x speed (1 strike), etc...
+long blinktime;
+long blinkperiod = 250; // Milliseconds
+bool blinkbool;
+long buzzerinterrupt;
 
-byte module_button = 1; //Hard-coded number of button modules.
-byte module_swires = 1; //Hard-coded number of simple wires modules.
+//byte module_button = 1; //Hard-coded number of button modules.
+//byte module_swires = 1; //Hard-coded number of simple wires modules.
 
 long lastDebounceTime = 0;  // the last time the output pin was toggled
-const long debounceDelay = 25;
-const long buttonpressorhold = 1000;
 
 bool track_button_state = HIGH;
 bool track_button_interaction = false; //tracking if the button has ever been pressed, therefore logic for played interaction
 bool shortpushneeded;
-byte isthisapress;
+bool isthisapress;
+bool button_trigger;
 
 byte button_colour;
 byte button_label;
@@ -71,6 +110,7 @@ byte strip_colour;
 String button_labels[4] = {"Abort", "Detonate", "Hold", "Press"};
 String button_colours[6] = {"Blue", "White", "Yellow", "Red", "Black", "---"}; //Black included so simple wires can use this array too. Button should not call black.
 char button_colours_s[6] = {'B', 'W', 'Y', 'R', 'K', '_'};
+String module_labels[6] = {"Missingno", "Time", "Button", "S Wires", "Keypad", "Simon"};
 
 long wrong_flash_time;
 
@@ -100,21 +140,21 @@ void setup() {
   randomSeed(Entropy.random());
 
   initialisehardware(); //initialise hardware
-  Serial.println("Initialisation done!");
+  Serial.println(F("Initialisation done!"));
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
   switch (gamemode) {
     case 1: //game running
-      Serial.println("Game starting!");
+      Serial.println(F("Game starting!"));
       gamerunning();
       break;
     case 2: //also stand-by post-game
       gamesetup();
       break;
     default: //stand-by state - stop inputs and hold timer post-game, also generate single round and prep game. 0 if completed initialisation, otherwise 2 after game has ran.
-      Serial.println("Building new game:");
+      Serial.println(F("Building new game:"));
       gamesetup();
       break;
   }
@@ -127,12 +167,12 @@ void loop() {
 void gamesetup() {
   if (gamemode == 2) {
 
-  } else {
+  } else if (gamemode == 0) {
     general_setup();
     button_setup();
-    Serial.println("Button setup done...");
+    Serial.println(F("Button setup done..."));
     simple_wires_setup();
-    Serial.println("Simple wires setup done...");
+    Serial.println(F("Simple wires setup done..."));
 
     char timestr[5] = "0500";
     timerdisp.writeDigitNum(0, int(timestr[0] - 48));
@@ -142,26 +182,39 @@ void gamesetup() {
     timerdisp.drawColon(true);
     timerdisp.writeDisplay();
 
+    digitalWrite(module_master[1][2], LOW);
+    digitalWrite(module_master[2][2], LOW);
+    digitalWrite(module_master[1][3], LOW);
+    digitalWrite(module_master[2][3], LOW);
+
+    place_button();
     place_swires();
 
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("Button: "); // 8 characters
-    lcd.print(button_colours[button_colour]);
+    lcd.print(F("Serial #: "));
+    lcd.print(serial_number);
     lcd.setCursor(0, 1);
-    lcd.print("Label: "); // 7 characters
-    lcd.print(button_labels[button_label]);
+    lcd.print(F("Battery #: "));
+    lcd.print(battery_number);
 
     track_button_state = HIGH; //Button starts out not pressed
     track_button_interaction = false; //Button was never interacted with
     lastDebounceTime = millis();
+
+    module_master[1][1]=0;
+    module_master[2][1]=0;
+
+    strikenumber = 0;
+    updatestrikes(0);
+
+    delay(3000);
 
     gamemode = 1;
   }
 }
 
 void gamerunning() {
-  Serial.println("Game starting...");
   timeleft = long(gamelength);
   timeleft = timeleft * 1000;
   time_scale = 4;
@@ -171,16 +224,36 @@ void gamerunning() {
     timerupdate();
     buzzerupdate();
     checkinputs();
-    updatestrikes();
-    // lightcycle(); // Calls test LED colour function
+    updatestrikes(0);
+    checkwin();
 
-  } while (timeleft > 0);
+  } while (gamemode == 1);
   gamemode = 0;
 }
 
 //**********************************************************************
 // FUNCTIONS: Physical preparation
 //**********************************************************************
+
+void place_button() {
+  button_trigger = false;
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(F("Button: ")); // 8 characters
+  lcd.print(button_colours[button_colour]);
+  lcd.setCursor(0, 1);
+  lcd.print(F("Label: ")); // 7 characters
+  lcd.print(button_labels[button_label]);
+  delay(5000);
+  track_button_interaction = false;
+
+  while (!button_trigger) {
+    timerupdate();
+    check_button();
+  }
+
+}
 
 void place_swires() {
   lcd.clear();
@@ -201,7 +274,7 @@ void place_swires() {
   delay(10000);
 
   while (wire_select != register_inputs) {
-    delay(5000);
+    delay(1000);
     check_swires();
   }
 }
@@ -227,7 +300,7 @@ void general_setup() {
     }
   }
   serial_number[6] = '\0';
-  Serial.print("Serial #: ");
+  Serial.print(F("Serial #: "));
   Serial.println(serial_number);
   //  Serial.print("Vowels?: ");
   //  Serial.println(serial_vowel);
@@ -240,11 +313,22 @@ void general_setup() {
   ind_car = random(2);
   battery_number = random(6);
 
-  Serial.print("FRK: ");
+  Serial.print(F("FRK: "));
   Serial.println(ind_frk);
-  Serial.print("CAR: ");
+  if (ind_frk) {
+    digitalWrite(ind_frk_led, HIGH);
+  } else {
+    digitalWrite(ind_frk_led, LOW);
+  }
+  Serial.print(F("CAR: "));
   Serial.println(ind_car);
-  Serial.print("Battery number: ");
+  if (ind_car) {
+    digitalWrite(ind_car_led, HIGH);
+  } else {
+    digitalWrite(ind_car_led, LOW);
+  }
+  digitalWrite(ind_car_led, ind_car);
+  Serial.print(F("Battery number: "));
   Serial.println(battery_number);
 
 }
@@ -253,9 +337,9 @@ void button_setup() {
   button_colour = random(4);
   button_label = random(4);
 
-  Serial.print("Button colour: ");
+  Serial.print(F("Button colour: "));
   Serial.println(button_colours[button_colour]);
-  Serial.print("Button label: ");
+  Serial.print(F("Button label: "));
   Serial.println(button_labels[button_label]);
 
   if (button_colour == 0 && button_label == 0) {
@@ -274,17 +358,20 @@ void button_setup() {
     shortpushneeded = false;
   }
 
-  Serial.print("Short push?: ");
-  Serial.println(shortpushneeded,DEC);
+  Serial.print(F("Short push?: "));
+  Serial.println(shortpushneeded, DEC);
 
   strip_colour = random(4);
+  Serial.print(F("Strip colour: "));
+  Serial.println(button_colours[strip_colour]);
 
+  Serial.print(F("Release on "));
   if (strip_colour == 0) {
-    Serial.println("Release on 4.");
+    Serial.println("4.");
   } else if (strip_colour == 2) {
-    Serial.println("Release on 5.");
+    Serial.println("5.");
   } else {
-    Serial.println("Release on 1.");
+    Serial.println("1.");
   }
 
 }
@@ -294,7 +381,7 @@ void simple_wires_setup() {
   wire_select = B00111111;
   wire_no = (random(120) % 4) + 3;
   byte removed_number = 6;
-  Serial.print("Number of simple wires: ");
+  Serial.print(F("Number of simple wires: "));
   Serial.println(wire_no);
   byte wire_counter[5] = {0, 0, 0, 0, 0};
   while (removed_number > wire_no) {
@@ -313,6 +400,8 @@ void simple_wires_setup() {
       this_colour = random(5);
       wire_colours[i] = this_colour;
       wire_counter[this_colour]++;
+    } else {
+      wire_colours[i] = 5;
     }
     Serial.print("Wire ");
     Serial.print(i + 1);
@@ -329,7 +418,7 @@ void simple_wires_setup() {
     }
   }
 
-  Serial.print("Wires present:");
+  Serial.print(F("Wires present:"));
   for (byte i = 0; i < wire_no; i++) {
     Serial.print(" ");
     Serial.print(wires_present[i] + 1);
@@ -388,7 +477,7 @@ void simple_wires_setup() {
     }
   }
 
-  Serial.print("Wire to cut in position: ");
+  Serial.print(F("Wire to cut in position: "));
   Serial.println(correct_wire + 1);
 
 }
@@ -423,121 +512,176 @@ void timerupdate() {
   //Timer update
   delta_t = millis() - thismillis;
   thismillis += delta_t;
-  timeleft = timeleft - (delta_t * time_scale / 4); // Updates the time left with the change in the time since last updating, modified by the time scale due to strikes
 
-  if (timeleft >= 60000) { // Over 1 minute on the clock...
-    timestr[0] = int(timeleft / 600000) + 48;
-    timestr[1] = int((timeleft % 600000) / 60000) + 48;
-    timestr[2] = int((timeleft % 60000) / 10000) + 48;
-    timestr[3] = int((timeleft % 10000) / 1000) + 48;
-  }
-  else if (timeleft < 0) { // Timer ran out
-    timeleft = 0;
-    for (int i = 0; i < 4; i++) {
-      timestr[i] = "0";
+  if (gamemode == 1) {
+    timeleft = timeleft - (delta_t * time_scale / 4); // Updates the time left with the change in the time since last updating, modified by the time scale due to strikes
+
+    if (timeleft >= 60000) { // Over 1 minute on the clock...
+      timestr[0] = (int)(timeleft / 600000) + 48;
+      timestr[1] = (int)((timeleft % 600000) / 60000) + 48;
+      timestr[2] = (int)((timeleft % 60000) / 10000) + 48;
+      timestr[3] = (int)((timeleft % 10000) / 1000) + 48;
     }
-  }
-  else { // Under 1 minute left...
-    timestr[0] = int(timeleft / 10000) + 48;
-    timestr[1] = int((timeleft % 10000) / 1000) + 48;
-    timestr[2] = int((timeleft % 1000) / 100) + 48;
-    timestr[3] = int((timeleft % 100) / 10) + 48;
-  }
-  timerdisp.writeDigitNum(0, int(timestr[0] - 48));
-  timerdisp.writeDigitNum(1, int(timestr[1] - 48));
-  timerdisp.writeDigitNum(3, int(timestr[2] - 48));
-  timerdisp.writeDigitNum(4, int(timestr[3] - 48));
-  //timerdisp.drawColon(true);
-  timerdisp.writeDisplay();
+    else if (timeleft < 0) { // Timer ran out
+      timeleft = 0;
+      for (int i = 0; i < 4; i++) {
+        timestr[i] = "0";
+      }
+      game_lose(1);
+    }
+    else { // Under 1 minute left...
+      timestr[0] = (int)(timeleft / 10000) + 48;
+      timestr[1] = (int)((timeleft % 10000) / 1000) + 48;
+      timestr[2] = (int)((timeleft % 1000) / 100) + 48;
+      timestr[3] = (int)((timeleft % 100) / 10) + 48;
+    }
+    timerdisp.writeDigitNum(0, (int)(timestr[0] - 48));
+    timerdisp.writeDigitNum(1, (int)(timestr[1] - 48));
+    timerdisp.writeDigitNum(3, (int)(timestr[2] - 48));
+    timerdisp.writeDigitNum(4, (int)(timestr[3] - 48));
+    //timerdisp.drawColon(true);
+    timerdisp.writeDisplay();
 
-  //  Serial.println(int(timeleft/1000));
-  //  Serial.println(int(timestr[3]-48));
-
+    //  Serial.println(int(timeleft / 1000));
+    //  Serial.println(int(timestr[3]-48));
+    //  Serial.print(int(timeleft / 600000) + 48);
+    //  Serial.print(" ");
+    //  Serial.print(int((timeleft % 600000) / 60000) + 48);
+    //  Serial.print(" ");
+    //  Serial.print(int((timeleft % 60000) / 10000) + 48);
+    //  Serial.print(" ");
+    //  Serial.print(int((timeleft % 10000) / 1000) + 48);
+    //  Serial.println(" ");
+    //  Serial.println(timestr);
+  }
 }
 
 void buzzerupdate() {
   //Buzzer
   if (timeleft == 0) {
     noTone(pin_buzzer);
-  } else if (sec_tick_over[1] != (int((timeleft % 1000) / 100) + 48) && sec_tick_over[1] == 48) { // If the tenth of the second number has changed from a 9 to 0...
-    buzz_timer = thismillis;
-    tone(pin_buzzer, 2093, 100); //Low tone on start of new second
-    //    Serial.println("-boop");
-  } else if (thismillis - buzz_timer > 750) {
-    tone(pin_buzzer, 3520, 100); //High tone near end of current second
-    buzz_timer = thismillis;
-    //    Serial.print("Beep");
+  } else if (buzzerinterrupt < thismillis) {
+
+    digitalWrite(module_master[1][2], LOW);
+    digitalWrite(module_master[2][2], LOW);
+
+    if (sec_tick_over != (int)((timeleft % 1000) / 100) + 48 && sec_tick_over == 48) { // If the tenth of the second number has changed from a 9 to 0...
+      buzz_timer = thismillis;
+      tone(pin_buzzer, 2093, 100); // Low tone on start of new second
+
+    } else if (thismillis - buzz_timer > 750) {
+      tone(pin_buzzer, 3520, 100); // High tone near end of current second
+      buzz_timer = thismillis;
+
+    }
   }
 
-  //  Serial.print("buzz_timer:              ");
-  //  Serial.println(buzz_timer);
-  //  Serial.print("thismillis - buzz_timer:   ");
-  //  Serial.println(thismillis - buzz_timer);
 
-  //  Serial.println(sec_tick_over[1] == 48);
-  //  Serial.print("int((timeleft % 10000) / 1000) + 48): ");
-  //  Serial.println(char(int((timeleft % 10000) / 1000) + 48));
-  //  Serial.print("sec_tick_over: ");
-  //  Serial.println(sec_tick_over[1]);
-  //  Serial.println(sec_tick_over[1] != (int((timeleft % 10000) / 1000) + 48));
 
-  sec_tick_over[1] = int((timeleft % 1000) / 100) + 48;
-
-  //  if (timeleft == 0) {
-  //    noTone(pin_buzzer);
-  //  }
-  //  else if ((timeleft % 1000) < 150) {
-  //    tone(pin_buzzer, 2093); //Low tone on start of new second
-  //  }
-  //  else if ((timeleft % 1000) >= 750 && (timeleft % 1000) < 850) {
-  //    tone(pin_buzzer, 3520); //High tone near end of current second
-  //  }
-  //  else {
-  //    noTone(pin_buzzer);
-  //  }
-  //}
-
-  // Test different colours on LED
-  //void lightcycle() {
-  //  if (int((timeleft / 1000) % 6) == 0) {
-  //    updateRGBLED(true, false, false);
-  //  } else if (int((timeleft / 1000) % 6) == 1) {
-  //    updateRGBLED(true, true, false);
-  //  } else if (int((timeleft / 1000) % 6) == 2) {
-  //    updateRGBLED(false, true, false);
-  //  } else if (int((timeleft / 1000) % 6) == 3) {
-  //    updateRGBLED(false, true, true);
-  //  } else if (int((timeleft / 1000) % 6) == 4) {
-  //    updateRGBLED(false, false, true);
-  //  } else if (int((timeleft / 1000) % 6) == 5) {
-  //    updateRGBLED(true, false, true);
-  //  }
-  //}
+  sec_tick_over = (int)((timeleft % 1000) / 100) + 48;
 }
 
-/*
-  void checkinputs() {
-  // read the input state and state changes of all buttons
-  static unsigned long lastButtonTime; // time stamp for remembering the time when the button states were last read
-  memset(buttonChange, 0, sizeof(buttonChange)); // reset all old state changes
-  if (millis() - lastButtonTime < BOUNCETIME) return; // within bounce time: leave the function
-  lastButtonTime = millis(); // remember the current time
-  for (int i = 0; i < NUMBUTTONS; i++)
-  {
-    byte curState = digitalRead(buttonPins[i]);      // current button state
-    if (INPUTMODE == INPUT_PULLUP) curState = !curState; // logic is inverted with INPUT_PULLUP
-    if (curState != buttonState[i])                  // state change detected
-    {
-      if (curState == HIGH) buttonChange[i] = BUTTONDOWN;
-      else buttonChange[i] = BUTTONUP;
+
+void updatestrikes(byte module_index) {
+
+  if (module_index != 0 && gamemode == 1) {
+    tone(pin_buzzer, 110, 500);
+    strikenumber ++;
+    Serial.println(strikenumber);
+    buzzerinterrupt = thismillis + 500;
+    digitalWrite(module_master[module_index][2], HIGH);
+    time_scale = 4 + strikenumber;
+    Serial.print(F("Strike from "));
+    Serial.println(module_labels[module_master[module_index][0]]);
+    Serial.println(module_master[module_index][2]);
+    Serial.println(module_index);
+  }
+
+  if (strikelimit == 3) { // Normal mode - 3 strikes = game over
+    switch (strikenumber) {
+      case 0:
+        lcd.setLED1Pin(LOW);
+        lcd.setLED2Pin(LOW);
+        break;
+      case 1:
+        lcd.setLED1Pin(HIGH);
+        lcd.setLED2Pin(LOW);
+        break;
+      case 2:
+        blinktime = blinktime + delta_t;
+        if (blinktime > blinkperiod) {
+          if (blinkbool) {
+            lcd.setLED1Pin(LOW);
+            lcd.setLED2Pin(LOW);
+            blinkbool = false;
+          } else {
+            lcd.setLED1Pin(HIGH);
+            lcd.setLED2Pin(HIGH);
+            blinkbool = true;
+          }
+          blinktime = blinktime - blinkperiod;
+        }
+        break;
+      case 3:
+        game_lose(module_index);
+        break;
     }
-    buttonState[i] = curState; // save the current button state
+  } else { // Hardcore mode - one error = game over
+    if (strikenumber == 0) {
+      lcd.setLED1Pin(LOW);
+      lcd.setLED2Pin(LOW);
+    } else {
+      game_lose(module_index);
+    }
   }
+  lcd.shift595();
+
+}
+
+void game_lose(byte module_index) {
+  lcd.clear();
+  lcd.setCursor(3, 0);
+  lcd.print(F("EXPLODED!"));
+  lcd.setCursor(0, 1);
+  lcd.print(F("Cause: "));
+  lcd.print(module_labels[module_master[module_index][0]]);
+  timerdisp.print(10000);
+  delay(15000);
+  gamemode = 0;
+}
+
+void moduledefuzed(byte module_index) {
+  module_master[module_index][1] = 1;
+  digitalWrite(module_master[module_index][3], HIGH);
+  Serial.print(F("Defused "));
+    Serial.println(module_labels[module_master[module_index][0]]);
+    Serial.println(module_master[module_index][3]);
+    Serial.println(module_index);
+}
+
+void checkwin() {
+  if ((module_master[1][0] != 0 && module_master[1][1] == 1) && (module_master[2][0] != 0 && module_master[2][1] == 1)) {
+
+    lcd.clear();
+    lcd.setCursor(4, 0);
+    lcd.print(F("DEFUSED!"));
+    lcd.setCursor(0, 1);
+    lcd.print(F("Time: "));
+    lcd.print(timestr[0]);
+    lcd.print(timestr[1]);
+    lcd.print(":");
+    lcd.print(timestr[2]);
+    lcd.print(timestr[3]);
+    timerdisp.setBrightness(0);
+    delay(750);
+    timerdisp.setBrightness(15);
+    delay(750);
+    timerdisp.setBrightness(0);
+    delay(750);
+    timerdisp.setBrightness(15);
+    delay(7750);
+    gamemode = 0;
   }
-*/
-
-void updatestrikes() {
-
 }
 
 
@@ -553,56 +697,112 @@ void checkinputs() {
 }
 
 void check_button() {   //BUTTON CHECK
-  bool thisread = digitalRead(pin_button_button);
+  bool thisread = digitalRead(module_master[1][4]);
+  const long debounceDelay = 25;
+  const long buttonpressorhold = 1000;
 
-  if ((thisread != track_button_state) && (millis() > lastDebounceTime + debounceDelay)) { // If the input has changed from what we have previously recorded, and time has moved on beyond any debounce...
-    lastDebounceTime = millis(); // Remember this change time
+  //  Serial.println(button_colours[strip_colour]);
+  //  Serial.println(shortpushneeded);
+
+  if ((thisread != track_button_state) && (thismillis > lastDebounceTime + debounceDelay)) { // If the input has changed from what we have previously recorded, and time has moved on beyond any debounce...
+    lastDebounceTime = thismillis; // Remember this change time
     track_button_state = thisread; // Remember the new state
+    if (thisread == LOW) { // If button is pressed..
+      track_button_interaction = true; // Then this module has been interacted with.
+    }
   }
 
-//    Serial.print(track_button_interaction == true);
-//    Serial.print(":");
-//    Serial.print(track_button_state == HIGH);
-//    Serial.print(":");
-//    Serial.println(millis() - lastDebounceTime);
+  //    Serial.print(track_button_interaction == true);
+  //    Serial.print(":");
+  //    Serial.print(track_button_state == HIGH);
+  //    Serial.print(":");
+  //    Serial.println(thismillis - lastDebounceTime);
+  //    Serial.println(isthisapress);
 
   if (track_button_state == LOW) { // The button is pressed...
-    if (millis() - lastDebounceTime > buttonpressorhold) { // and has been pressed for long enough to be considered a hold...
-      //      Serial.println("Button held...");
+    if (thismillis - lastDebounceTime > buttonpressorhold) { // and has been pressed long enough to be considered a hold...
       isthisapress = false;
-      Serial.println(isthisapress);
-      if (track_button_interaction == true) {
-        button_logic();
+      //      if (shortpushneeded) { // Needed to push quickly, not do this hold...
+      //        if (track_button_interaction) { // Don't overpenalise for every cycle of the hold
+      //          Serial.println(F("BUZZ! Only need short press!"));
+      //          updatestrikes(2);
+      //          track_button_interaction = false;
+      //        }
+      //      } else { // This hold is correct so trigger strip...
+      if (gamemode == 1) {
+        if (strip_colour == 0) {
+          updateRGBLED(false, false, true);
+        } else if (strip_colour == 1) {
+          updateRGBLED(true, true, true);
+        } else if (strip_colour == 2) {
+          updateRGBLED(true, true, false);
+        } else {
+          updateRGBLED(true, false, false);
+        }
+      }
+    } else { // has been pressed only recently so not yet a hold
+      isthisapress = true;
+    }
+  } else if (track_button_state == HIGH) { // The button is not pressed...
+    if (track_button_interaction) { // But it has been interacted with, and so it is now released...
+      if (gamemode != 1) {
+        button_trigger = true;
+      } else {
+        track_button_interaction = false;
+        updateRGBLED(false, false, false);
+
+        if (shortpushneeded) { // Needs only short push
+          if (isthisapress) { // Short press released - correct
+            Serial.println(F("Success! Short press"));
+            moduledefuzed(1);
+          } else { // Long hold release - wrong
+            Serial.println(F("BUZZ! Do not hold"));
+            updatestrikes(1);
+          }
+        } else { // Needs long hold
+          if (isthisapress) { // Short press released - wrong
+            Serial.println(F("BUZZ! Hold longer"));
+            updatestrikes(1);
+          } else { // Long hold release - correct
+            Serial.println(timestr);
+            if (strip_colour == 0) {
+              if (timestr[0] == '4' || timestr[1] == '4' || timestr[2] == '4' || timestr[3] == '4') {
+                Serial.println(F("Success!"));
+                moduledefuzed(1);
+              } else {
+                Serial.println(F("BUZZ! Should be 4"));
+                updatestrikes(1);
+              }
+            } else if (strip_colour == 2) {
+              if (timestr[0] == '5' || timestr[1] == '5' || timestr[2] == '5' || timestr[3] == '5') {
+                Serial.println(F("Success!"));
+                moduledefuzed(1);
+              } else {
+                Serial.println(F("BUZZ! Should be 5"));
+                updatestrikes(1);
+              }
+            } else {
+              if (timestr[0] == '1' || timestr[1] == '1' || timestr[2] == '1' || timestr[3] == '1') {
+                Serial.println(F("Success!"));
+                moduledefuzed(1);
+              } else {
+                Serial.println(F("BUZZ! Should be 1"));
+                updatestrikes(1);
+              }
+            }
+          }
+        }
       }
     }
-    else if ((millis() - lastDebounceTime) > debounceDelay) { // and has been pressed for long enough to filter out bounce...
-      //      Serial.println("Button pressed...");
-      isthisapress = true;
-      Serial.println(isthisapress);
-      track_button_interaction = true;
-    }
   }
-  else if ((track_button_state == HIGH) && (track_button_interaction == true)) { // The button is not pressed but has been interacted with (does not consider state at start of game)...
-    if ((millis() - lastDebounceTime) > debounceDelay) { // and has been released long enough ago to ignore bounce...
-//      if (isthisapress == 1) { // and the button was pressed briefly...
-//                Serial.println("Short push!");
-//      }
-//      else if (isthisapress == 0) { // and the button was held down...
-//                Serial.println("Long hold!");
-//      }
-    }
-    button_logic();
-    track_button_interaction = false;
-  }
-
 }
 
 
 void check_swires() { //SIMPLE WIRES CHECK
-  digitalWrite(pin_swires_l, HIGH);
-  digitalWrite(pin_swires_c, HIGH);
-  digitalWrite(pin_swires_l, LOW);
-  register_inputs = shiftIn(pin_swires_d, pin_swires_c, LSBFIRST);
+  digitalWrite(module_master[2][5], HIGH);
+  digitalWrite(module_master[2][6], HIGH);
+  digitalWrite(module_master[2][5], LOW);
+  register_inputs = shiftIn(module_master[2][4], module_master[2][6], LSBFIRST);
   //register_inputs = register_inputs >> 2;
 
   byte byte_compare;
@@ -619,9 +819,11 @@ void check_swires() { //SIMPLE WIRES CHECK
       for (byte i = 0; i < 6; i++) { // Look through all bits
         if (bitRead(byte_compare, i) == 1) { // Find the changed bit = the cut wire position
           if (correct_wire == i) { // If the cut wire is the correct wire...
-            Serial.println("Success!");
+            Serial.println(F("Success!"));
+            moduledefuzed(2);
           } else { // If the cut wire isn't the correct wire
-            Serial.println("BUZZ!");
+            Serial.println(F("BUZZ!"));
+            updatestrikes(2);
           }
         }
       }
@@ -634,102 +836,89 @@ void check_swires() { //SIMPLE WIRES CHECK
 }
 
 void updateRGBLED (bool r, bool g, bool b) {
-  if (r == true) {
-    digitalWrite(pin_button_led_r, HIGH);
+  if (r) {
+    digitalWrite(module_master[1][5], HIGH);
   } else {
-    digitalWrite(pin_button_led_r, LOW);
+    digitalWrite(module_master[1][5], LOW);
   }
-  if (g == true) {
-    digitalWrite(pin_button_led_g, HIGH);
+  if (g) {
+    digitalWrite(module_master[1][6], HIGH);
   } else {
-    digitalWrite(pin_button_led_g, LOW);
+    digitalWrite(module_master[1][6], LOW);
   }
-  if (b == true) {
-    digitalWrite(pin_button_led_b, HIGH);
+  if (b) {
+    digitalWrite(module_master[1][7], HIGH);
   } else {
-    digitalWrite(pin_button_led_b, LOW);
+    digitalWrite(module_master[1][7], LOW);
   }
 }
 
-void button_logic () {
-  if (track_button_state == LOW && !isthisapress) { // Button is currently being held
-    if (!shortpushneeded) { // Button needs to be held
-      if (strip_colour == 0) {
-        updateRGBLED(false, false, true);
-      } else if (strip_colour == 1) {
-        updateRGBLED(true, true, true);
-      } else if (strip_colour == 2) {
-        updateRGBLED(true, true, false);
-      } else {
-        updateRGBLED(true, false, false);
-      }
-    } else { // Button needs only short press
-      Serial.println("BUZZ! Only need short press!");
-      track_button_interaction = false;
-    }
-  } else if (track_button_state == HIGH) { // Button is released
-    Serial.println("track");
-    Serial.println(isthisapress);
-    if (isthisapress) { // Button was short pressed
-      Serial.println("press");
-      if (shortpushneeded) { //Button needs to be short pressed
-        Serial.println("Success!");
-      } else { // Button needs holding
-        Serial.println("BUZZ! Need to hold the button!");
-      }
-    } else { // Button was held
-      if (!shortpushneeded) { // Button needs to be held
-        Serial.println(timestr);
-        if (strip_colour == 0) {
-          if (timestr[0] == '4' || timestr[1] == '4' || timestr[2] == '4' || timestr[3] == '4') {
-            Serial.println("Success!");
-          } else {
-            Serial.println("BUZZ! wrong time");
-          }
-        } else if (strip_colour == 2) {
-          if (timestr[0] == '5' || timestr[1] == '5' || timestr[2] == '5' || timestr[3] == '5') {
-            Serial.println("Success!");
-          } else {
-            Serial.println("BUZZ!  wrong time");
-          }
-        } else {
-          if (timestr[0] == '1' || timestr[1] == '1' || timestr[2] == '1' || timestr[3] == '1') {
-            Serial.println("Success!");
-          } else {
-            Serial.println("BUZZ!   wrong time");
-          }
-        }
-      }
-    }
-    updateRGBLED(false, false, false); // turn off LED after release
-  }
-}
 
 //**********************************************************************
 // FUNCTIONS: Hardware Allocation
 //**********************************************************************
 
 void initialisehardware() { // For testing, use the other to dynamically assign pins
+
+  // Manually set timer
+  module_master[0][0] = 1;
+  module_master[0][1] = 2;
+  module_master[0][2] = 3;
+  module_master[0][3] = 4;
+  module_master[0][4] = 5;
+  module_master[0][5] = 7;
+  module_master[0][6] = 8;
+  pinMode(module_master[0][1], OUTPUT);
+  pinMode(module_master[0][2], OUTPUT);
+  pinMode(module_master[0][3], OUTPUT);
+  pinMode(module_master[0][4], OUTPUT);
+  pinMode(module_master[0][5], OUTPUT);
+  pinMode(module_master[0][6], OUTPUT);
+
+  // Manually set button
+  module_master[1][0] = 2;
+  module_master[1][1] = 0;
+  module_master[1][2] = 25;
+  module_master[1][3] = 23;
+  module_master[1][4] = 33; // Button input
+  module_master[1][5] = 27; // LED R
+  module_master[1][6] = 29; // LED G
+  module_master[1][7] = 31; // LED B
+  pinMode(module_master[1][2], OUTPUT);
+  pinMode(module_master[1][3], OUTPUT);
+
+  // Manually set simple wires
+  module_master[2][0] = 3;
+  module_master[2][1] = 0;
+  module_master[2][2] = 47;
+  module_master[2][3] = 45;
+  module_master[2][4] = 53; // Data
+  module_master[2][5] = 51; // Latch
+  module_master[2][6] = 49; // Clock
+  pinMode(module_master[2][2], OUTPUT);
+  pinMode(module_master[2][3], OUTPUT);
+
   pinMode(pin_buzzer, OUTPUT);
   digitalWrite(pin_buzzer, LOW); //Buzzer
-  pinMode(pin_button_button, INPUT_PULLUP); //Button
-  pinMode(pin_button_led_r, OUTPUT);
-  digitalWrite(pin_button_led_r, LOW); //RGB LED R
-  pinMode(pin_button_led_g, OUTPUT);
-  digitalWrite(pin_button_led_g, LOW); //RGB LED G
-  pinMode(pin_button_led_b, OUTPUT);
-  digitalWrite(pin_button_led_b, LOW); //RGB LED B
 
-  timerdisp.begin(0x70); //Timer uses I2C pins
+  pinMode(module_master[1][4], INPUT_PULLUP); //Button
+  pinMode(module_master[1][5], OUTPUT);
+  digitalWrite(module_master[1][5], LOW); //RGB LED R
+  pinMode(module_master[1][6], OUTPUT);
+  digitalWrite(module_master[1][6], LOW); //RGB LED G
+  pinMode(module_master[1][7], OUTPUT);
+  digitalWrite(module_master[1][7], LOW); //RGB LED B
+
+  timerdisp.begin(0x70); // Timer uses I2C pins @ 0x70
   timerdisp.print(10000);
   timerdisp.writeDisplay();
 
   lcd.begin(16, 2);
 
-  pinMode(pin_swires_d, INPUT); // Data pin
-  pinMode(pin_swires_l, OUTPUT); // Latch pin
-  pinMode(pin_swires_c, OUTPUT); // Clock pin
-  digitalWrite(6, LOW);
+  pinMode(module_master[2][4], INPUT); // Data pin
+  pinMode(module_master[2][5], OUTPUT); // Latch pin
+  pinMode(module_master[2][6], OUTPUT); // Clock pin
+
 }
 
 /*
