@@ -1,0 +1,54 @@
+========================================================================
+
+To-do list:
+
+1)  Fully initialise/reset games between sessions - NOT STARTED
+2)  Reinstate dynamic pin allocation to modules - NOT STARTED
+3)  Handle dynamic module numbers - NOT STARTED
+4)  Include inputs to state modules connected (through IR remote?) - NOT STARTED
+5)  Include potential for shift registers to route inputs for multiple modules - NOT STARTED
+6)  Create Keypad module - NOT STARTED
+7)  Create Simon Says module - NOT STARTED
+
+========================================================================
+
+Notes:
+
+Keypad:
+
+Symbol list:
+ 1) Ϙ = Archaic Koppa
+ 2) Ѧ = Capital Little Yus
+ 3) ƛ = Small Lambda with stroke
+ 4) Ϟ = Koppa
+ 5) Ѭ = Capital Iotified Big Yus
+ 6) ϗ = Kai
+ 7) Ͽ = Dotted Lunate anti-Sigma
+ 8) Ӭ = Capital E with diaeresis
+ 9) Ҩ = O-hook
+10) ☆ = White star
+11) ¿ = Inverted question mark
+12) © = Copyright
+13) Ѽ = Broad Omega with pokrytie and Psilon pneuma
+14) Җ = Capital Zhe with descender
+15) Ԇ = Capital Komi Dzje
+16) б = Small Be
+17) ¶ = Pilcrow
+18) Ѣ = Capital Yat
+19) ټ = Teh with ring
+20) Ψ = Psi
+21) Ͼ = Dotted Lunate Sigma
+22) Ѯ = Capital Ksi
+23) ★ = Black star
+24) ҂ = Thousands
+25) æ = Small Aesc
+26) Ҋ = Capital Short I with tail
+27) Ω = Capital Omega
+
+Column list:
+C1 = {1, 2, 3, 4, 5, 6, 7}
+C2 = {8, 1, 7, 9, 10, 6, 11}
+C3 = {12, 13, 9, 14, 15, 3, 10}
+C4 = {16, 17, 18, 5, 14, 11, 19}
+C5 = {20, 19, 18, 21, 17, 22, 23}
+C6 = {16, 8, 24, 25, 20, 26, 27}
