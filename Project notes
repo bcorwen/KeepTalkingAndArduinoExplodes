@@ -2,14 +2,15 @@
 
 To-do list:
 
-1)  Fully initialise/reset games between sessions - IN TESTING...
-2)  Reinstate dynamic pin allocation to modules - NOT STARTED
-3)  Handle dynamic module numbers - NOT STARTED
-4)  Include inputs to state modules connected (through IR remote?) - NOT STARTED
-5)  Include potential for shift registers to route inputs for multiple modules - IN PROGRESS (Shift in complete)
-6)  Create Keypad module - IN PROGRESS
-7)  Create Simon Says module - COMPLETE!
-8)  Improved handling for Simple Wires module (e.g. not checking reconnected wire or previously cut wire) - COMPLETE!
+1)  Reinstate dynamic pin allocation to modules - NOT STARTED
+2)  Handle dynamic module numbers - NOT STARTED
+3)  Include inputs to state modules connected (through IR remote?) - NOT STARTED
+4)  Include potential for shift registers to route inputs for multiple modules - IN PROGRESS (Shift in complete)
+5)  Create Keypad module - IN TESTING
+6)  Create Simon Says module - COMPLETE!
+7)  Improved handling for Simple Wires module (e.g. not checking reconnected wire or previously cut wire) - COMPLETE!
+8)  Resdesign LCD wiring, removing from shift register and allowing multiple screens to share lines - NOT STARTED
+9)  Include realistic indicator/battery/port allocation - IN TESTING
 
 ========================================================================
 
