@@ -26,3 +26,8 @@ Modules:
 
 
 Physical construction:
+Modules made from flat inner-front plate, outer-front plate and box.
+Inner-front plate is flat on the outside with extrusions back to receive screws.
+Outer-front plate is flat on the bottom with the module-specific design printed into it. This is glued onto the inner-front plate.
+Box consists of the back and sides, with screw holes. This allows the box and front plates to be screwed together. There will be a connector on the back side, so when the module is slid into the case it will be hooked up to the comm and power bus.
+
