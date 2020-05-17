@@ -5,11 +5,11 @@ To-do list:
 1)  Reinstate dynamic pin allocation to modules - NOT STARTED
 2)  Handle dynamic module numbers - NOT STARTED
 3)  Include inputs to state modules connected (through IR remote?) - NOT STARTED
-4)  Include potential for shift registers to route inputs for multiple modules - IN PROGRESS (Shift in complete)
-5)  Create Keypad module - IN TESTING
+4)  Include potential for shift registers to route inputs for multiple modules - COMPLETE!
+5)  Create Keypad module - IMPLEMENTED... no lights but set up to do so
 6)  Create Simon Says module - COMPLETE!
 7)  Improved handling for Simple Wires module (e.g. not checking reconnected wire or previously cut wire) - COMPLETE!
-8)  Resdesign LCD wiring, removing from shift register and allowing multiple screens to share lines - NOT STARTED
+8)  Resdesign LCD wiring, removing from shift register and allowing multiple screens to share lines - COMPLETE!
 9)  Include realistic indicator/battery/port allocation - IN TESTING
 
 ========================================================================
