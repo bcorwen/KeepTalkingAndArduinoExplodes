@@ -1,0 +1,28 @@
+Structure:
+Design - Move to a truly plug-and-play game with microcontrollers built-in to each module.
+Controllers communicate with SPI.
+SPI: 3 core lines (clock, MISO, MOSI) + 1 line per slave (slave select)
+Common connection will require 6 pins: +5V, GND, CLK, MISO, MOSI, SSx
+
+Master (placed in the timer)
+Will:
+- be the game controller,
+- poll the slaves to identify which modules are connected on startup,
+- continually poll slaves to pick up module info and vice versa,
+- control the timer and strike lights, buzzer, edge work (serial, indicators)
+Needs:
+- to take game customisation options - IR receiver or bluetooth to phone app
+- enough pins to have 11 Slave selects, core SPI, run timer, run strikes, run buzzer
+
+Slave (placed in all other modules)
+Will:
+- run module logic and interface with the buttons/wires/displays,
+- update strike/success to the master,
+Need:
+- enough pins to control module-specific components, and SPI
+
+
+Modules:
+
+
+Physical construction:
