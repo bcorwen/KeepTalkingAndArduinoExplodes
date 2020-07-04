@@ -4,14 +4,14 @@
 //
 //======================================================================
 //
-//  version 0.3.0
+//  version 0.4.0
 //
-//  Goal for this version: Complete Game Master, enabling tracking of
-//    module successes, strikes and game win/lose conditions.
+//  Goal for this version: Firm up game functions, include Simon Says
+//                          and include shift register support for mods
 //
 //======================================================================
 //
-//  Modules supported: Button, Simple wires.
+//  Modules supported: Button, Simple wires, Simon says
 //
 //======================================================================
 
@@ -23,7 +23,8 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_LEDBackpack.h>
 #include <Entropy.h>
-#include <LiquidCrystal595.h>
+#include <LiquidCrystal.h>
+//#include <LiquidCrystal595.h>
 
 //**********************************************************************
 // GLOBAL VARIABLES
@@ -31,9 +32,9 @@
 
 // Temp pin variables:
 byte pin_buzzer = 2;
-byte pin_lcd_d = 3;
-byte pin_lcd_l = 4;
-byte pin_lcd_c = 5;
+//byte pin_lcd_d = 3;
+//byte pin_lcd_l = 4;
+//byte pin_lcd_c = 5;
 //byte pin_button_button = 31;
 //byte pin_button_led_r = 29;
 //byte pin_button_led_g = 27;
@@ -41,11 +42,19 @@ byte pin_lcd_c = 5;
 //byte pin_swires_d = 53;
 //byte pin_swires_l = 51;
 //byte pin_swires_c = 49;
-byte ind_car_led = 7;
-byte ind_frk_led = 8;
+byte ind_car_led = 40;
+byte ind_frk_led = 42;
+
+byte pin_lcd_rs = 7;
+byte pin_lcd_e = 8;
+byte pin_lcd_d4 = 3;
+byte pin_lcd_d5 = 4;
+byte pin_lcd_d6 = 5;
+byte pin_lcd_d7 = 6;
 
 Adafruit_7segment timerdisp = Adafruit_7segment();
-LiquidCrystal595 lcd(pin_lcd_d, pin_lcd_l, pin_lcd_c); // Data pin, latch pin, clock pin
+//LiquidCrystal595 lcd(pin_lcd_d, pin_lcd_l, pin_lcd_c); // Data pin, latch pin, clock pin
+LiquidCrystal lcd(pin_lcd_rs, pin_lcd_e, pin_lcd_d4, pin_lcd_d5, pin_lcd_d6, pin_lcd_d7);
 
 byte gamemode = 0;
 
@@ -67,16 +76,21 @@ byte module_master[6][8]; // First row reserved for timer/misc
 // First dimension: maximum number of modules, excluding timer
 // Second dimension: maximum number of arguments to define a module
 //
-// Module codes:      0         1        2          3
-//                No module   Timer    Button  Simple wires
+// Module codes:      0         1        2          3           4         5          6
+//                No module   Timer    Button  Simple wires   Keypad    Simon   Compl wires
 //
 //                         i =  0           1         2         3           4               5               6              7
-// Timer layout         = {module type,   buzzer , lcd data, lcd ltch,  lcd clock,     ind_car_led,     ind_frk_led}
+// Timer layout         = {module type,   buzzer , strike 1, strike 2,     ---  ,     ind_car_led,     ind_frk_led}
 // Button layout        = {module type, completed, strike R, strike G, button input,      LED R,          LED G,         LED B}
 // Simple wires layout  = {module type, completed, strike R, strike G, register data, register latch,  register clock}
-// Keypad layout        = {module type, completed, strike R, strike G,  button 1,        button 2,       button 3,      button 4}
-// Simon says layout    = {module type, completed, strike R, strike G,  button R,        button Y,       button G,      button B}
+// Keypad layout        = {module type, completed, strike R, strike G,  in reg #,      in reg bits,     out reg #,   out reg bits}
+// Simon says layout    = {module type, completed, strike R, strike G,  in reg #,      in reg bits,     out reg #,   out reg bits}
+// Compl wires layout   = {module type, completed, strike R, strike G, register data, register latch,  register clock}
 //
+// For 4-input modules, reference to a shift-in register and position of the bits will suffice for pin allocations
+
+byte shiftin_master[6];
+byte shiftout_master[6];
 
 long timeleft;
 long gamelength = 300; //seconds
@@ -103,7 +117,6 @@ bool track_button_interaction = false; //tracking if the button has ever been pr
 bool shortpushneeded;
 bool isthisapress;
 bool button_trigger;
-
 byte button_colour;
 byte button_label;
 byte strip_colour;
@@ -111,6 +124,32 @@ String button_labels[4] = {"Abort", "Detonate", "Hold", "Press"};
 String button_colours[6] = {"Blue", "White", "Yellow", "Red", "Black", "---"}; //Black included so simple wires can use this array too. Button should not call black.
 char button_colours_s[6] = {'B', 'W', 'Y', 'R', 'K', '_'};
 String module_labels[6] = {"Missingno", "Time", "Button", "S Wires", "Keypad", "Simon"};
+
+byte simon_sequence[5];
+byte simon_length;
+byte simon_stage; // Which stage the game is at (e.g. how many lights are flashing)
+byte simon_step; // Which step in the sequence the player is at (e.g. ready for the 3rd in the sequence)
+long simon_led_timing; // Tracks time for lamp lights
+byte simon_disp_step; // Tracks the current part of the sequence which is being lit
+long simon_reset_timing; // Tracks time for module to restart flashing sequence
+bool simon_button_track;
+bool simon_buzz;
+// Temp output pins while no shift out reg to use:
+byte simon_led_r = 42;
+byte simon_led_b = 40;
+byte simon_led_y = 38;
+byte simon_led_g = 36;
+
+byte keypad_stage;
+byte keypad_symbols[4];
+byte symbol_index[7];
+byte keypad_order[4];
+byte keypad_column_choice;
+bool keypad_track_state;
+byte lcd_custom1[8];
+byte lcd_custom2[8];
+byte lcd_custom3[8];
+byte lcd_custom4[8];
 
 long wrong_flash_time;
 
@@ -121,12 +160,22 @@ byte wire_no;
 byte wire_select = B00111111;
 byte correct_wire;
 
+byte track_cwire_state = B00111111;
+byte cwire_setting[6];
+byte cwire_correct;
+byte register_cwires;
+
 char serial_number[7];
 bool serial_vowel;
 bool serial_odd;
 bool serial_even;
 
 byte battery_number;
+byte port_number;
+byte ind_number;
+byte widget_types[5];
+
+bool parallel_port;
 bool ind_frk;
 bool ind_car;
 
@@ -168,12 +217,8 @@ void gamesetup() {
   if (gamemode == 2) {
 
   } else if (gamemode == 0) {
-    general_setup();
-    button_setup();
-    Serial.println(F("Button setup done..."));
-    simple_wires_setup();
-    Serial.println(F("Simple wires setup done..."));
 
+    // Reset timer
     char timestr[5] = "0500";
     timerdisp.writeDigitNum(0, int(timestr[0] - 48));
     timerdisp.writeDigitNum(1, int(timestr[1] - 48));
@@ -182,14 +227,51 @@ void gamesetup() {
     timerdisp.drawColon(true);
     timerdisp.writeDisplay();
 
-    digitalWrite(module_master[1][2], LOW);
-    digitalWrite(module_master[2][2], LOW);
-    digitalWrite(module_master[1][3], LOW);
-    digitalWrite(module_master[2][3], LOW);
+    // Turn off module success LEDs
+    //    digitalWrite(module_master[1][2], LOW);
+    //    digitalWrite(module_master[2][2], LOW);
+    //    digitalWrite(module_master[1][3], LOW);
+    //    digitalWrite(module_master[2][3], LOW);
+    //    bitWrite(shiftout_master[3], 2, 0);
+    //    bitWrite(shiftout_master[3], 3, 0);
+    //    bitWrite(shiftout_master[3], 4, 0);
+    //    bitWrite(shiftout_master[3], 5, 0);
+    //    bitWrite(shiftout_master[3], 6, 0);
+    //    bitWrite(shiftout_master[3], 7, 0);
 
+    digitalWrite(module_master[0][2], LOW);
+    digitalWrite(module_master[0][3], LOW);
+    digitalWrite(module_master[1][2], LOW);
+    digitalWrite(module_master[1][3], LOW);
+    digitalWrite(module_master[2][2], LOW);
+    digitalWrite(module_master[2][3], LOW);
+    digitalWrite(module_master[3][2], LOW);
+    digitalWrite(module_master[3][3], LOW);
+
+    //    shiftout_master[1] = 0;
+    //    shiftout_master[2] = 0;
+    shift_out();
+
+    // Create game win-conditions
+    general_setup();
+    button_setup();
+    Serial.println(F("Button setup done..."));
+    simple_wires_setup();
+    Serial.println(F("Simple wires setup done..."));
+    simon_setup();
+    Serial.println(F("Simon Says setup done..."));
+    keypad_setup();
+    Serial.println(F("Keypad setup done..."));
+    //        cwires_setup();
+    //        Serial.println(F("Complicated wires setup done..."));
+
+    // Physical set-up for button and simple wires...
     place_button();
     place_swires();
+    place_keypad();
+    //    place_cwires();
 
+    // Ready LCD for game to start
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print(F("Serial #: "));
@@ -198,18 +280,33 @@ void gamesetup() {
     lcd.print(F("Battery #: "));
     lcd.print(battery_number);
 
+    // Reset game tracking variables
     track_button_state = HIGH; //Button starts out not pressed
     track_button_interaction = false; //Button was never interacted with
-    lastDebounceTime = millis();
-
-    module_master[1][1]=0;
-    module_master[2][1]=0;
-
+    thismillis = millis();
+    lastDebounceTime = thismillis;
+    module_master[1][1] = 0;
+    module_master[2][1] = 0;
+    module_master[3][1] = 0;
+    module_master[4][1] = 0;
     strikenumber = 0;
     updatestrikes(0);
 
-    delay(3000);
+    simon_stage = 0;
+    //    simon_stage = simon_length-1; // TESTING!
+    simon_step = 0;
+    simon_led_timing = thismillis;
+    simon_disp_step = 10;
+    simon_button_track = false;
+    digitalWrite(simon_led_r, LOW);
+    digitalWrite(simon_led_b, LOW);
+    digitalWrite(simon_led_y, LOW);
+    digitalWrite(simon_led_g, LOW);
 
+    keypad_stage = 0;
+
+    // Wait and then start the game
+    delay(3000);
     gamemode = 1;
   }
 }
@@ -222,9 +319,11 @@ void gamerunning() {
 
   do {
     timerupdate();
+    simonupdate();
     buzzerupdate();
     checkinputs();
     updatestrikes(0);
+    shift_out();
     checkwin();
 
   } while (gamemode == 1);
@@ -245,14 +344,13 @@ void place_button() {
   lcd.setCursor(0, 1);
   lcd.print(F("Label: ")); // 7 characters
   lcd.print(button_labels[button_label]);
-  delay(5000);
+  delay(3000);
   track_button_interaction = false;
 
   while (!button_trigger) {
     timerupdate();
     check_button();
   }
-
 }
 
 void place_swires() {
@@ -271,11 +369,81 @@ void place_swires() {
   lcd.print(button_colours_s[wire_colours[4]]);
   lcd.setCursor(12, 1);
   lcd.print(button_colours_s[wire_colours[5]]);
-  delay(10000);
+  delay(5000);
 
   while (wire_select != register_inputs) {
     delay(1000);
     check_swires();
+  }
+}
+
+//void place_cwires() {
+//  lcd.clear();
+//  lcd.setCursor(0, 0);
+//  lcd.print("Compl' wires:");
+//  lcd.setCursor(1, 1);
+//  lcd.print("Remove wires...");
+//  delay(5000);
+//
+//  while (register_cwires != 0) {
+//    delay(1000);
+////    check_cwires();
+//  }
+//
+//  for (byte i = 0; i < 6; i++) {
+//    lcd.clear();
+//    lcd.setCursor(0, 0);
+//    lcd.print("Wire #");
+//    lcd.print(i + 1);
+//    lcd.setCursor(1, 1);
+//    if (bitRead(cwires_setting[i], 0) == 1) {
+//      lcd.print("W");
+//    }
+//    if (bitRead(cwires_setting[i], 1) == 1) {
+//      lcd.print("R");
+//    }
+//    if (bitRead(cwires_setting[i], 2) == 1) {
+//      lcd.print("B");
+//    }
+//    if (bitRead(cwires_setting[i], 3) == 1) {
+//      lcd.print(" *");
+//    }
+//    while (bitRead(register_cwires, 6 - i) != 1) {
+//      delay(1000);
+////      check_cwires();
+//    }
+//  }
+
+//}
+
+void place_keypad() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Keypad:");
+  lcd.setCursor(13, 0);
+  //  lcd.print(keypad_symbols[0]);
+  lcd.write(byte(1));
+  lcd.setCursor(15, 0);
+  //  lcd.print(keypad_symbols[1]);
+  lcd.write(byte(2));
+  lcd.setCursor(13, 1);
+  //  lcd.print(keypad_symbols[2]);
+  lcd.write(byte(3));
+  lcd.setCursor(15, 1);
+  //  lcd.print(keypad_symbols[3]);
+  lcd.write(byte(4));
+  lcd.setCursor(0, 1);
+  lcd.print("C:");
+  lcd.print(keypad_column_choice + 1);
+  delay(5000);
+
+  check_shiftin();
+  //  check_keypad();
+  Serial.println(byte(shiftin_master[1]) / 16);
+  while (byte(shiftin_master[1]) / 16 == 0) {
+    delay(100);
+    check_shiftin();
+    check_keypad();
   }
 }
 
@@ -286,8 +454,10 @@ void place_swires() {
 void general_setup() {
 
   for (int i = 0; i < 6; i++) {
-    if (i == 0) {
+    if (i == 3 || i == 4) {
       serial_number[i] = char_generator(1);
+    } else if (i == 2) {
+      serial_number[i] = char_generator(0);
     } else if (i == 5) {
       serial_number[i] = char_generator(0);
       if (serial_number[i] % 2 == 1) {
@@ -296,18 +466,67 @@ void general_setup() {
         serial_odd = 1;
       }
     } else {
-      serial_number[i] = char_generator(1 - (byte(random(36) / 26)));
+      serial_number[i] = char_generator(1 - (byte(random(35) / 25)));
     }
   }
   serial_number[6] = '\0';
   Serial.print(F("Serial #: "));
   Serial.println(serial_number);
-  //  Serial.print("Vowels?: ");
-  //  Serial.println(serial_vowel);
-  //  Serial.print("Even?: ");
-  //  Serial.println(serial_odd);
-  //  Serial.print("Odds?: ");
-  //  Serial.println(serial_even);
+  //    Serial.print("Vowels?: ");
+  //    Serial.println(serial_vowel);
+  //    Serial.print("Even?: ");
+  //    Serial.println(serial_odd);
+  //    Serial.print("Odds?: ");
+  //    Serial.println(serial_even);
+
+  //  byte widget_number = random(2) + 4;
+  //  battery_number = random(3) + random(3); // Number from 0-4, with a bias towards 2
+  //  if (widget_number > battery_number) {
+  //    ind_number = random(1 + widget_number - battery_number);
+  //    port_number = widget_number - (battery_number + ind_number);
+  //  } else {
+  //    port_number = 0;
+  //    ind_number = 0;
+  //  }
+  //  ind_car = false;
+  //  ind_frk = false;
+  //  bool isthisacopy = false;
+  //  lcd.clear();
+  //  lcd.setCursor(0, 0);
+  //  for (byte i = 0; i < widget_number; i++) {
+  //    if (i < battery_number) { // Add battery
+  //      widget_types[i] = random(2); // AA or D
+  //    } else if (i < (battery_number + ind_number)) { // Add indicator
+  //      if (i > 0) {
+  //        do {
+  //          isthisacopy = false;
+  //          widget_types[i] = random(23) + 10; // All inds (11 types), off and on (x2)
+  //          for (byte j = 0; j < i; j++) {
+  //            if (widget_types[i] % 2 == widget_types[j] % 2) {
+  //              isthisacopy = true;
+  //            }
+  //          }
+  //        } while (isthisacopy = true);
+  //        if (widget_types[i] == 15) {
+  //          ind_car = true; // 14 = off, 15 = on
+  //        } else if (widget_types[i] == 17) {
+  //          ind_frk = true; // 16 = off, 17 = on
+  //        }
+  //      }
+  //    } else { // Add port
+  //      widget_types[i] = random(4) + 40; // Parallel, serial, other
+  //      if (widget_types[i] == 40) {
+  //        parallel_port = true;
+  //      }
+  //    }
+  //    if (i > 0) {
+  //      lcd.print(":");
+  //    }
+  //    //    lcd.sprintf(widget_types[i], "%02d");
+  //    lcd.print(widget_types[i], DEC);
+  //  }
+  //
+  //  delay(3000);
 
   ind_frk = random(2);
   ind_car = random(2);
@@ -476,9 +695,179 @@ void simple_wires_setup() {
       correct_wire = wires_present[3]; // Cut the fourth wire
     }
   }
-
   Serial.print(F("Wire to cut in position: "));
   Serial.println(correct_wire + 1);
+}
+
+//void cwires_setup() {
+//  cwire_correct = 0;
+//  byte cwires_logic = {1, serial_even, serial_even, serial_even, 1, 1, 0, parallel_port, 0, battery_check, parallel_port, battery_check, battery_check, battery_check, parallel_port, 0};
+//  byte battery_check = 0;
+//
+//  for (byte i = 0; i < 6; i++) {
+//    for (byte j = 0; j < 5; j++) { // White, Red, Blue, *, LED
+//      bitWrite(cwire_setting[i], j, byte(random(2)));
+//    }
+//
+//    if (battery_number > 1) {
+//      battery_check = 1;
+//    } else {
+//      battery_check = 0;
+//    }
+//    if (cwire_setting[i] % 8 == 0) {
+//      cwire_setting[i]++; // If no colours selected, default to white.
+//    } else if (cwire_setting[i] % 8 == 7) {
+//      cwire_setting[i]--; // If all colours selected, remove white.
+//    }
+//    cwire_correct = cwires_logic[byte(cwire_setting[i] / 2)];
+//  }
+//}
+
+void simon_setup() {
+  // R=0, B=1, Y=2, G=3.
+  Serial.println(F("Simon says:"));
+
+  for (byte i = 0; i < 5; i++) {
+    simon_sequence[i] = 0;
+  }
+
+  simon_length = random(3) + 3;
+  for (byte i = 0; i < simon_length; i++) {
+    simon_sequence[i] = random(4);
+    Serial.println(simon_sequence[i]);
+  }
+}
+
+void keypad_setup() {
+
+  byte col_select = B00000000;
+  byte symbols_picked = 0;
+  byte this_pick;
+
+  keypad_column_choice = random(6);
+  Serial.print(F("Keypad column: "));
+  Serial.println(keypad_column_choice);
+
+  switch (keypad_column_choice) {
+    case 0:
+      symbol_index[0] = 1;
+      symbol_index[1] = 2;
+      symbol_index[2] = 3;
+      symbol_index[3] = 4;
+      symbol_index[4] = 5;
+      symbol_index[5] = 6;
+      symbol_index[6] = 7;
+      break;
+    case 1:
+      symbol_index[0] = 8;
+      symbol_index[1] = 1;
+      symbol_index[2] = 7;
+      symbol_index[3] = 9;
+      symbol_index[4] = 10;
+      symbol_index[5] = 6;
+      symbol_index[6] = 11;
+      break;
+    case 2:
+      symbol_index[0] = 12;
+      symbol_index[1] = 13;
+      symbol_index[2] = 9;
+      symbol_index[3] = 14;
+      symbol_index[4] = 15;
+      symbol_index[5] = 3;
+      symbol_index[6] = 11;
+      break;
+    case 3:
+      symbol_index[0] = 16;
+      symbol_index[1] = 17;
+      symbol_index[2] = 18;
+      symbol_index[3] = 5;
+      symbol_index[4] = 14;
+      symbol_index[5] = 11;
+      symbol_index[6] = 19;
+      break;
+    case 4:
+      symbol_index[0] = 20;
+      symbol_index[1] = 19;
+      symbol_index[2] = 18;
+      symbol_index[3] = 21;
+      symbol_index[4] = 17;
+      symbol_index[5] = 22;
+      symbol_index[6] = 23;
+      break;
+    case 5:
+      symbol_index[0] = 16;
+      symbol_index[1] = 8;
+      symbol_index[2] = 24;
+      symbol_index[3] = 25;
+      symbol_index[4] = 20;
+      symbol_index[5] = 26;
+      symbol_index[6] = 27;
+      break;
+  }
+
+  while (symbols_picked < 4) {
+    this_pick = keypad_picker(col_select);
+    if (this_pick < 7) {
+      keypad_symbols[symbols_picked] = this_pick;
+      bitSet(col_select, this_pick);
+      symbols_picked++;
+    }
+  }
+  Serial.print(keypad_symbols[0]);
+  Serial.print(" ");
+  Serial.print(keypad_symbols[1]);
+  Serial.print(" ");
+  Serial.print(keypad_symbols[2]);
+  Serial.print(" ");
+  Serial.println(keypad_symbols[3]);
+
+  byte greater_number;
+  for (byte i = 0; i < 4; i++) { // i is the element we are looking at
+    greater_number = 0;
+    for (byte j = 0; j < 4 ; j++) { // j is the other element we are comparing against
+      if (keypad_symbols[i] > keypad_symbols[j]) {
+        greater_number++;
+      }
+    }
+    keypad_order[i] = greater_number;
+  }
+
+  byte symbol_mat[][8] = {{B01110, B10001, B10001, B10001, B01110, B00100, B00100, B00000},
+    {B00100, B01010, B10001, B11111, B10101, B10101, B10101, B00000},
+    {B11000, B00110, B01100, B00100, B01010, B10010, B10011, B00000},
+    {B10000, B01001, B10011, B10101, B11001, B10010, B00001, B00000},
+    {B10111, B10101, B10010, B11110, B10010, B10111, B10111, B00000},
+    {B00000, B10001, B01010, B01110, B01010, B01001, B10010, B00000},
+    {B01110, B10001, B00001, B00101, B00001, B10001, B01110, B00000},
+    {B01010, B00000, B01110, B00001, B00111, B00001, B01110, B00000},
+    {B01000, B10010, B10101, B10101, B10101, B10010, B01101, B00000},
+    {B00100, B00100, B11011, B10001, B01010, B01110, B10001, B00000},
+    {B00100, B00000, B00100, B01000, B10000, B10001, B01110, B00000},
+    {B01110, B10001, B10111, B11001, B10111, B10001, B01110, B00000},
+    {B00100, B01010, B00000, B10101, B10001, B10101, B01010, B00000},
+    {B10101, B10101, B01110, B00100, B01110, B10101, B10101, B00000},
+    {B01100, B10010, B00010, B01100, B00010, B00010, B00001, B00000},
+    {B00000, B01111, B10000, B11110, B10001, B10001, B01110, B00000},
+    {B01111, B10011, B10011, B01111, B00011, B00011, B00011, B00000},
+    {B01000, B11100, B01000, B01110, B01001, B01001, B01110, B00000},
+    {B01010, B00000, B10001, B11110, B00100, B01010, B00100, B00000},
+    {B10101, B10101, B10101, B10101, B01110, B00100, B01110, B00000},
+    {B01110, B10001, B10000, B10100, B10000, B10001, B01110, B00000},
+    {B01010, B01110, B10001, B00110, B00001, B11110, B01100, B00000},
+    {B00100, B00100, B11111, B11111, B01110, B01110, B10001, B00000},
+    {B00100, B00100, B11111, B00100, B11111, B00100, B00100, B00000},
+    {B00000, B11010, B00101, B01111, B10100, B10101, B01010, B00000},
+    {B01010, B00100, B10001, B10011, B10101, B11001, B10001, B00000},
+    {B00000, B01110, B10001, B10001, B10001, B01010, B11011, B00000}
+  };
+
+  byte this_symbol[8];
+  for (byte i = 0; i < 4; i++) {
+    for (byte j = 0; j < 8; j++) {
+      this_symbol[j] = symbol_mat[symbol_index[keypad_symbols[i]] - 1][j];
+    }
+    lcd.createChar(i + 1 , this_symbol);
+  }
 
 }
 
@@ -488,20 +877,41 @@ char char_generator(bool letter) {
     temp = (random(10) + 48);
     return temp;
   } else {
-    temp = (random(26) + 65);
+    temp = (random(25) + 65);
     if (temp == 65 || temp == 69 || temp == 73 || temp == 79 || temp == 85) {
       serial_vowel = 1;
+      if (temp == 79) {
+        temp = 69;
+      }
+    } else if (temp == 89) {
+      temp = 90;
     }
     return temp;
+
   }
 }
 
 void wire_deleter() {
   byte looking_at_wire;
-  looking_at_wire = random(5); // pick a number from 0-5 to choose as a blank space instead of a wire.
+  looking_at_wire = random(6); // pick a number from 0-5 to choose as a blank space instead of a wire.
   if (bitRead(wire_select, looking_at_wire) == 1) { //if this wire is here
     bitClear(wire_select, looking_at_wire);
   }
+}
+
+byte keypad_picker(byte col_select) {
+  byte looking_at_symbol;
+  byte results;
+  looking_at_symbol = random(7); // pick a number from 0-6 to choose from the symbol column.
+  if (bitRead(col_select, looking_at_symbol) == 0) { //if this symbol hasn't been picked yet
+    //    bitSet(col_select, looking_at_symbol);
+    results = looking_at_symbol;
+  } else {
+    results = 7;
+  }
+  //  Serial.println(col_select, BIN);
+  //  Serial.println(looking_at_symbol);
+  return results;
 }
 
 //**********************************************************************
@@ -524,9 +934,13 @@ void timerupdate() {
     }
     else if (timeleft < 0) { // Timer ran out
       timeleft = 0;
-      for (int i = 0; i < 4; i++) {
-        timestr[i] = "0";
-      }
+      //      for (int i = 0; i < 4; i++) {
+      //        timestr[i] = "0";
+      //      }
+      timestr[0] = '-';
+      timestr[1] = '-';
+      timestr[2] = '-';
+      timestr[3] = '-';
       game_lose(1);
     }
     else { // Under 1 minute left...
@@ -539,8 +953,10 @@ void timerupdate() {
     timerdisp.writeDigitNum(1, (int)(timestr[1] - 48));
     timerdisp.writeDigitNum(3, (int)(timestr[2] - 48));
     timerdisp.writeDigitNum(4, (int)(timestr[3] - 48));
-    //timerdisp.drawColon(true);
+    timerdisp.drawColon(true);
     timerdisp.writeDisplay();
+
+    // Serial.println(timestr);
 
     //  Serial.println(int(timeleft / 1000));
     //  Serial.println(int(timestr[3]-48));
@@ -558,27 +974,160 @@ void timerupdate() {
 
 void buzzerupdate() {
   //Buzzer
-  if (timeleft == 0) {
-    noTone(pin_buzzer);
-  } else if (buzzerinterrupt < thismillis) {
+  //  if (timeleft == 0) {
+  //    noTone(pin_buzzer);
+  //  } else
 
+  //  Serial.println(timeleft);
+  if (buzzerinterrupt < thismillis) { // Time now ticked over beyond end of buzzer interrupt
+
+    //      digitalWrite(module_master[1][2], LOW);
+    //      digitalWrite(module_master[2][2], LOW);
+
+    // Reset the red module warning light
+    //    bitWrite(shiftout_master[3], 2, 0);
+    //    bitWrite(shiftout_master[3], 4, 0);
+    //    bitWrite(shiftout_master[3], 6, 0);
     digitalWrite(module_master[1][2], LOW);
-    digitalWrite(module_master[2][2], LOW);
+    digitalWrite(module_master[2+][2], LOW);
+    digitalWrite(module_master[3][2], LOW);
 
-    if (sec_tick_over != (int)((timeleft % 1000) / 100) + 48 && sec_tick_over == 48) { // If the tenth of the second number has changed from a 9 to 0...
-      buzz_timer = thismillis;
-      tone(pin_buzzer, 2093, 100); // Low tone on start of new second
+    //    if (sec_tick_over != (int)((timeleft % 1000) / 100) + 48 && sec_tick_over == 48) { // If the tenth of the second number has changed from a 9 to 0...
+    //      buzz_timer = thismillis;
+    //      tone(pin_buzzer, 2093, 100); // Low tone on start of new second
+    //
+    //    } else if (thismillis - buzz_timer > 750) {
+    //      tone(pin_buzzer, 3520, 100); // High tone near end of current second
+    //      buzz_timer = thismillis;
+    //    }
+    //  sec_tick_over = (int)((timeleft % 1000) / 100) + 48;
 
-    } else if (thismillis - buzz_timer > 750) {
-      tone(pin_buzzer, 3520, 100); // High tone near end of current second
-      buzz_timer = thismillis;
-
+    if ((timeleft % 1000) < 50) {
+      tone(pin_buzzer, 3520);
+      //      Serial.println(":Beep");
+    }
+    else if ((timeleft % 1000) >= 750 && (timeleft % 1000) < 900) {
+      tone(pin_buzzer, 2093);
+      //      Serial.println(":Boop");
+    }
+    else {
+      noTone(pin_buzzer);
+      //      Serial.println(" ");
     }
   }
+}
 
 
+void simon_lights(byte colour) {
+  int freq_buzz;
+  const byte simon_led_on_time = 750; // Time LED will light up
 
-  sec_tick_over = (int)((timeleft % 1000) / 100) + 48;
+  if (colour < 4) { // Light up this colour
+    simon_led_timing = thismillis + simon_led_on_time; // Next time to flag is when the light is due to turn off
+    switch (colour) {
+      case 0:
+        //        digitalWrite(simon_led_r, HIGH);
+        bitWrite(shiftout_master[module_master[3][6]], 0, 1);
+        freq_buzz = 494;
+        break;
+      case 1:
+        //        digitalWrite(simon_led_b, HIGH);
+        bitWrite(shiftout_master[module_master[3][6]], 1, 1);
+        freq_buzz = 587;
+        break;
+      case 2:
+        //        digitalWrite(simon_led_y, HIGH);
+        bitWrite(shiftout_master[module_master[3][6]], 2, 1);
+        freq_buzz = 698;
+        break;
+      case 3:
+        //        digitalWrite(simon_led_g, HIGH);
+        bitWrite(shiftout_master[module_master[3][6]], 3, 1);
+        freq_buzz = 880;
+        break;
+    }
+    if (buzzerinterrupt <= thismillis) { // Buzzer is not being interrupted already
+      buzzerinterrupt = thismillis + simon_led_on_time;
+      tone(pin_buzzer, freq_buzz, simon_led_on_time);
+    }
+  } else { // Turn lights off
+    //    digitalWrite(simon_led_r, LOW);
+    //    digitalWrite(simon_led_b, LOW);
+    //    digitalWrite(simon_led_y, LOW);
+    //    digitalWrite(simon_led_g, LOW);
+    bitWrite(shiftout_master[module_master[3][6]], 0, 0);
+    bitWrite(shiftout_master[module_master[3][6]], 1, 0);
+    bitWrite(shiftout_master[module_master[3][6]], 2, 0);
+    bitWrite(shiftout_master[module_master[3][6]], 3, 0);
+  }
+}
+
+void simonupdate() {
+  //Red tone = 494Hz (B4)
+  //Blue tone = 587 (D4)
+  //Yellow tone = 698 (F4)
+  //Green tone = 880 (A5)
+  const byte simon_led_on_time = 750; // Time LED will light up
+  const byte simon_led_off_time = 250; // Time between LEDs lighting
+  const long simon_repeat_time = 4000; // Time between LED sequence repeats
+  const long simon_advance_time = 2000; // Time between finishing previous input and displaying next stage
+  const long simon_reset_time = 4000; // Time between last user input and LEDs repeating sequence
+
+  //  Serial.print("Display step: ");
+  //  Serial.println(simon_disp_step);
+
+  // if (module_master[3][1] == 0) { // Is this module not disarmed yet?
+  if (simon_led_timing <= thismillis) { // Due for the next led to light
+    if (simon_disp_step > 9) { // Display step > 9 means this is between flashes
+      simon_disp_step = simon_disp_step - 10; // Transition step under 10 and so directly stating which step of the sequence it is lighting up
+      //      if (buzzerinterrupt > thismillis) { // Buzzer is being interrupted already
+      //        simon_buzz = false;
+      //      } else {
+      //        buzzerinterrupt = thismillis + simon_led_on_time;
+      //        simon_buzz = true;
+      //      }
+      //      simon_led_timing = thismillis + simon_led_on_time; // Next time to flag is when the light is due to turn off
+      if (simon_disp_step < 5) { // Display of sequence
+        simon_step = 0;
+        simon_lights(simon_sequence[simon_disp_step]);
+      } else { // Player interacting with buttons
+        switch (shiftin_master[1] % 16) {
+          case 1:
+            simon_lights(0);
+            break;
+          case 2:
+            simon_lights(1);
+            break;
+          case 4:
+            simon_lights(2);
+            break;
+          case 8:
+            simon_lights(3);
+            break;
+        }
+      }
+    } else if (simon_disp_step < 9) { // Display step currently lighting up a button
+      if (simon_disp_step == simon_stage) { // This is the last light in the sequence
+        simon_disp_step = 10; // Stage 10 puts in preparation for starting the sequence over next time.
+        simon_led_timing = thismillis + simon_repeat_time;
+      } else if (simon_disp_step < simon_stage) { // Progressing through steps...
+        simon_disp_step = simon_disp_step + 11; // In waiting for next light
+        simon_led_timing = thismillis + simon_led_off_time;
+      } else { // Holding for player pressing buttons
+        if (simon_step == 0 || simon_step == 5) {
+          simon_led_timing = thismillis + simon_advance_time;
+        } else {
+          simon_led_timing = thismillis + simon_reset_time;
+        }
+        simon_disp_step = 10;
+        if (module_master[3][1] == 1) { // Module disarmed
+          simon_disp_step = 9; // State never checked for...
+        }
+      }
+      simon_lights(4);
+    }
+  }
+  //}
 }
 
 
@@ -600,23 +1149,31 @@ void updatestrikes(byte module_index) {
   if (strikelimit == 3) { // Normal mode - 3 strikes = game over
     switch (strikenumber) {
       case 0:
-        lcd.setLED1Pin(LOW);
-        lcd.setLED2Pin(LOW);
+        //          lcd.setLED1Pin(LOW);
+        //          lcd.setLED2Pin(LOW);
+        digitalWrite(module_master[0][2], 0);
+        digitalWrite(module_master[0][3], 0);
         break;
       case 1:
-        lcd.setLED1Pin(HIGH);
-        lcd.setLED2Pin(LOW);
+        //          lcd.setLED1Pin(HIGH);
+        //          lcd.setLED2Pin(LOW);
+        digitalWrite(module_master[0][2], 1);
+        digitalWrite(module_master[0][3], 0);
         break;
       case 2:
         blinktime = blinktime + delta_t;
         if (blinktime > blinkperiod) {
           if (blinkbool) {
-            lcd.setLED1Pin(LOW);
-            lcd.setLED2Pin(LOW);
+            //              lcd.setLED1Pin(LOW);
+            //              lcd.setLED2Pin(LOW);
+            digitalWrite(module_master[0][2], 0);
+            digitalWrite(module_master[0][3], 0);
             blinkbool = false;
           } else {
-            lcd.setLED1Pin(HIGH);
-            lcd.setLED2Pin(HIGH);
+            //              lcd.setLED1Pin(HIGH);
+            //              lcd.setLED2Pin(HIGH);
+            digitalWrite(module_master[0][2], 1);
+            digitalWrite(module_master[0][3], 1);
             blinkbool = true;
           }
           blinktime = blinktime - blinkperiod;
@@ -628,13 +1185,13 @@ void updatestrikes(byte module_index) {
     }
   } else { // Hardcore mode - one error = game over
     if (strikenumber == 0) {
-      lcd.setLED1Pin(LOW);
-      lcd.setLED2Pin(LOW);
+      //      lcd.setLED1Pin(LOW);
+      //      lcd.setLED2Pin(LOW);
     } else {
       game_lose(module_index);
     }
   }
-  lcd.shift595();
+  //  lcd.shift595();
 
 }
 
@@ -646,21 +1203,50 @@ void game_lose(byte module_index) {
   lcd.print(F("Cause: "));
   lcd.print(module_labels[module_master[module_index][0]]);
   timerdisp.print(10000);
+  timerdisp.writeDisplay();
+  tone(pin_buzzer, 110, 1500);
   delay(15000);
   gamemode = 0;
 }
 
 void moduledefuzed(byte module_index) {
   module_master[module_index][1] = 1;
-  digitalWrite(module_master[module_index][3], HIGH);
+      digitalWrite(module_master[module_index][3], HIGH);
+//  bitWrite(shiftout_master[1], (module_index * 2 + 1), 1);
   Serial.print(F("Defused "));
-    Serial.println(module_labels[module_master[module_index][0]]);
-    Serial.println(module_master[module_index][3]);
-    Serial.println(module_index);
+  Serial.println(module_labels[module_master[module_index][0]]);
+  Serial.println(module_master[module_index][3]);
+  Serial.println(module_index);
+}
+
+void shift_out() {
+  //  digitalWrite(shiftout_master[4], HIGH);
+  digitalWrite(shiftout_master[5], HIGH);
+  digitalWrite(shiftout_master[4], LOW);
+  shiftOut(shiftout_master[3], shiftout_master[5], MSBFIRST, shiftout_master[module_master[3][6]]);
+  //  shiftOut(shiftout_master[3], shiftout_master[5], MSBFIRST, shiftout_master[1]);
+  digitalWrite(shiftout_master[4], HIGH);
+
+  //  digitalWrite(34, HIGH);
+  //  digitalWrite(36, LOW);
+  ////  shiftOut(38,34,LSBFIRST, 0);
+  ////  shiftOut(38,34,LSBFIRST, 0);
+  //  shiftOut(38,34,MSBFIRST, shiftout_master[module_master[3][6]]);
+  //    digitalWrite(36, HIGH);
+//
+//  Serial.print(" - SO:");
+//  Serial.println(shiftout_master[module_master[3][6]]);
+//  Serial.print("Shiftout 5:");
+//  Serial.println(shiftout_master[5]);
+//  Serial.print("Shiftout 4:");
+//  Serial.println(shiftout_master[4]);
+//  Serial.print("Shiftout 3:");
+//  Serial.println(shiftout_master[3]);
+
 }
 
 void checkwin() {
-  if ((module_master[1][0] != 0 && module_master[1][1] == 1) && (module_master[2][0] != 0 && module_master[2][1] == 1)) {
+  if ((module_master[1][0] != 0 && module_master[1][1] == 1) && (module_master[2][0] != 0 && module_master[2][1] == 1) && (module_master[3][0] != 0 && module_master[3][1] == 1)) { // && (module_master[4][0] != 0 && module_master[4][1] == 1)
 
     lcd.clear();
     lcd.setCursor(4, 0);
@@ -672,13 +1258,27 @@ void checkwin() {
     lcd.print(":");
     lcd.print(timestr[2]);
     lcd.print(timestr[3]);
-    timerdisp.setBrightness(0);
+    //timerdisp.setBrightness(0);
+    timerdisp.clear();
+    timerdisp.writeDisplay();
     delay(750);
-    timerdisp.setBrightness(15);
+    //timerdisp.setBrightness(15);
+    timerdisp.writeDigitNum(0, (int)(timestr[0] - 48));
+    timerdisp.writeDigitNum(1, (int)(timestr[1] - 48));
+    timerdisp.writeDigitNum(3, (int)(timestr[2] - 48));
+    timerdisp.writeDigitNum(4, (int)(timestr[3] - 48));
+    timerdisp.writeDisplay();
     delay(750);
-    timerdisp.setBrightness(0);
+    //timerdisp.setBrightness(0);
+    timerdisp.clear();
+    timerdisp.writeDisplay();
     delay(750);
-    timerdisp.setBrightness(15);
+    //timerdisp.setBrightness(15);
+    timerdisp.writeDigitNum(0, (int)(timestr[0] - 48));
+    timerdisp.writeDigitNum(1, (int)(timestr[1] - 48));
+    timerdisp.writeDigitNum(3, (int)(timestr[2] - 48));
+    timerdisp.writeDigitNum(4, (int)(timestr[3] - 48));
+    timerdisp.writeDisplay();
     delay(7750);
     gamemode = 0;
   }
@@ -691,9 +1291,22 @@ void checkwin() {
 
 void checkinputs() {
 
+  check_shiftin();
   check_button();
   check_swires();
+  check_simon();
+    check_keypad();
+}
 
+void check_shiftin() {
+  //  digitalWrite(shiftin_master[4], HIGH);
+  digitalWrite(shiftin_master[5], HIGH);
+  digitalWrite(shiftin_master[4], LOW);
+  shiftin_master[1] = shiftIn(shiftin_master[3], shiftin_master[5], LSBFIRST);
+  digitalWrite(shiftin_master[4], HIGH);
+//  Serial.print("SI:");
+//  Serial.print(shiftin_master[1]);
+  //  shiftin_master[2] = shiftIn(shiftin_master[3], shiftin_master[5], LSBFIRST);
 }
 
 void check_button() {   //BUTTON CHECK
@@ -712,12 +1325,12 @@ void check_button() {   //BUTTON CHECK
     }
   }
 
-  //    Serial.print(track_button_interaction == true);
-  //    Serial.print(":");
-  //    Serial.print(track_button_state == HIGH);
-  //    Serial.print(":");
-  //    Serial.println(thismillis - lastDebounceTime);
-  //    Serial.println(isthisapress);
+  //      Serial.print(track_button_interaction == true);
+  //      Serial.print(":");
+  //      Serial.print(track_button_state == HIGH);
+  //      Serial.print(":");
+  //      Serial.println(thismillis - lastDebounceTime);
+  //      Serial.println(isthisapress);
 
   if (track_button_state == LOW) { // The button is pressed...
     if (thismillis - lastDebounceTime > buttonpressorhold) { // and has been pressed long enough to be considered a hold...
@@ -757,6 +1370,7 @@ void check_button() {   //BUTTON CHECK
             moduledefuzed(1);
           } else { // Long hold release - wrong
             Serial.println(F("BUZZ! Do not hold"));
+            strip_colour = random(4); // If short push needed but long hold is released, colour is random and can change every attempt
             updatestrikes(1);
           }
         } else { // Needs long hold
@@ -802,37 +1416,171 @@ void check_swires() { //SIMPLE WIRES CHECK
   digitalWrite(module_master[2][5], HIGH);
   digitalWrite(module_master[2][6], HIGH);
   digitalWrite(module_master[2][5], LOW);
-  register_inputs = shiftIn(module_master[2][4], module_master[2][6], LSBFIRST);
-  //register_inputs = register_inputs >> 2;
+  register_inputs = shiftIn(module_master[2][4], module_master[2][6], MSBFIRST);
+  register_inputs = register_inputs >> 2;
 
   byte byte_compare;
 
   if (register_inputs != track_wire_state) { // change in inputs
+    if (register_inputs < track_wire_state || gamemode != 1) { // Omit anything where a wire is reconnected!
+      Serial.println(register_inputs, BIN);
 
-    Serial.println(register_inputs, BIN);
+      byte_compare = register_inputs ^ track_wire_state;
+      Serial.println(byte_compare, BIN);
 
-    byte_compare = register_inputs ^ track_wire_state;
-    Serial.println(byte_compare, BIN);
+      if (gamemode == 1) {
 
-    if (gamemode == 1) {
-
-      for (byte i = 0; i < 6; i++) { // Look through all bits
-        if (bitRead(byte_compare, i) == 1) { // Find the changed bit = the cut wire position
-          if (correct_wire == i) { // If the cut wire is the correct wire...
-            Serial.println(F("Success!"));
-            moduledefuzed(2);
-          } else { // If the cut wire isn't the correct wire
-            Serial.println(F("BUZZ!"));
-            updatestrikes(2);
+        for (byte i = 0; i < 6; i++) { // Look through all bits
+          if (bitRead(byte_compare, i) == 1) { // Find the changed bit = the cut wire position
+            if (correct_wire == i) { // If the cut wire is the correct wire...
+              Serial.println(F("Success!"));
+              moduledefuzed(2);
+            } else { // If the cut wire isn't the correct wire
+              Serial.println(F("BUZZ!"));
+              updatestrikes(2);
+            }
           }
         }
       }
+      track_wire_state = register_inputs; // Update the tracked state so long as a connection hasn't rejoined
     }
-
-    track_wire_state = register_inputs;
-
   }
+}
 
+void check_simon() { //SIMON SAYS CHECK
+  byte correct_seq[4];
+  byte this_colour;
+  const long simon_reset_time = 4000; // Time between last user input and LEDs repeating sequence
+
+  //  Serial.print(simon_stage);
+  //  Serial.print(":");
+  //  Serial.println(simon_step);
+
+  if (simon_button_track == false) { // If a button wasn't pressed last iteration...
+    if (shiftin_master[1] % 16 > 0) { // Something has now been pressed...
+      simon_disp_step = 16;
+      if (serial_vowel == true) {
+        if (strikenumber == 0) {
+          correct_seq[0] = 1;
+          correct_seq[1] = 0;
+          correct_seq[2] = 3;
+          correct_seq[3] = 2;
+        } else if (strikenumber == 1) {
+          correct_seq[0] = 2;
+          correct_seq[1] = 3;
+          correct_seq[2] = 0;
+          correct_seq[3] = 1;
+        } else {
+          correct_seq[0] = 3;
+          correct_seq[1] = 0;
+          correct_seq[2] = 1;
+          correct_seq[3] = 2;
+        }
+      } else {
+        if (strikenumber == 0) {
+          correct_seq[0] = 1;
+          correct_seq[1] = 2;
+          correct_seq[2] = 0;
+          correct_seq[3] = 3;
+        } else if (strikenumber == 1) {
+          correct_seq[0] = 0;
+          correct_seq[1] = 1;
+          correct_seq[2] = 3;
+          correct_seq[3] = 2;
+        } else {
+          correct_seq[0] = 2;
+          correct_seq[1] = 3;
+          correct_seq[2] = 0;
+          correct_seq[3] = 1;
+        }
+      }
+      simon_button_track = true;
+      if (shiftin_master[1] % 16 == 1) { //R
+        this_colour = 0;
+      } else if (shiftin_master[1] % 16 == 2) { //B
+        this_colour = 1;
+      } else if (shiftin_master[1] % 16 == 4) { //Y
+        this_colour = 2;
+      } else if (shiftin_master[1] % 16 == 8) { //G
+        this_colour = 3;
+      }
+
+      if (correct_seq[simon_sequence[simon_step]] == this_colour) { //Right colour pressed
+        Serial.println("Right colour!");
+        simon_disp_step = 16;
+        simon_led_timing = thismillis;
+        if (simon_step == simon_stage) { //Last button press for this sequence
+          simon_stage ++;
+          simon_step = 0;
+          if (simon_stage == simon_length) { //All stages complete
+            moduledefuzed(3);
+          }
+        } else { // Not last press for this stage
+          simon_step++;
+        }
+      } else {
+        updatestrikes(3);
+        simon_disp_step = 15;
+        simon_led_timing = thismillis;
+        simon_step = 0;
+      }
+    }
+  } else { // Button was pressed previously
+    if (shiftin_master[1] % 16 == 0) { // Now nothing pressed
+      simon_button_track = false;
+    }
+  }
+}
+
+void check_keypad() { // KEYPAD CHECK
+
+  byte this_button_press;
+  Serial.print("Shift: ");
+  Serial.println(shiftin_master[1]);
+  Serial.print("Keypad: ");
+  Serial.println(byte(shiftin_master[1] / 16));
+
+  if (module_master[4][1] == 0) { // If the module isn't defused
+
+    if (byte(shiftin_master[1] / 16) != 0  ) { // and something has been pressed now...
+      if (!keypad_track_state) { // and if nothing was pressed last check...
+        keypad_track_state = true;
+        switch (byte(shiftin_master[1] / 16)) {
+          case 1:
+            this_button_press = 0;
+            break;
+          case 2:
+            this_button_press = 1;
+            break;
+          case 4:
+            this_button_press = 2;
+            break;
+          case 8:
+            this_button_press = 3;
+            break;
+        }
+        Serial.print(this_button_press);
+        Serial.print(":");
+        Serial.print(keypad_order[this_button_press]);
+        Serial.print(":");
+        Serial.println(keypad_stage);
+
+        if (keypad_order[this_button_press] == keypad_stage) {
+          keypad_stage++;
+          Serial.println("Right button!");
+        } else if (keypad_order[this_button_press] > keypad_stage) {
+          updatestrikes(4);
+          Serial.println("Wrong button...");
+        }
+        if (keypad_stage == 4) {
+          moduledefuzed(4);
+        }
+
+      }
+    } else { // and nothing is being pressed now
+      keypad_track_state = false;
+    }
+  }
 }
 
 void updateRGBLED (bool r, bool g, bool b) {
@@ -859,15 +1607,24 @@ void updateRGBLED (bool r, bool g, bool b) {
 //**********************************************************************
 
 void initialisehardware() { // For testing, use the other to dynamically assign pins
+  init_timer();
+  init_shiftin();
+  init_shiftout();
+  init_button();
+  init_swires();
+  init_simon();
+  //    init_keypad();
+}
 
+void init_timer() {
   // Manually set timer
   module_master[0][0] = 1;
   module_master[0][1] = 2;
-  module_master[0][2] = 3;
-  module_master[0][3] = 4;
-  module_master[0][4] = 5;
-  module_master[0][5] = 7;
-  module_master[0][6] = 8;
+  module_master[0][2] = 12;
+  module_master[0][3] = 13;
+  module_master[0][4] = 0;
+  module_master[0][5] = 40;
+  module_master[0][6] = 42;
   pinMode(module_master[0][1], OUTPUT);
   pinMode(module_master[0][2], OUTPUT);
   pinMode(module_master[0][3], OUTPUT);
@@ -875,11 +1632,54 @@ void initialisehardware() { // For testing, use the other to dynamically assign 
   pinMode(module_master[0][5], OUTPUT);
   pinMode(module_master[0][6], OUTPUT);
 
+  digitalWrite(module_master[0][2],LOW);
+  digitalWrite(module_master[0][3],LOW);
+
+  pinMode(pin_buzzer, OUTPUT);
+  digitalWrite(pin_buzzer, LOW); //Buzzer
+  timerdisp.begin(0x70); // Timer uses I2C pins @ 0x70
+  timerdisp.print(10000);
+  timerdisp.writeDisplay();
+
+  pinMode(pin_lcd_rs, OUTPUT);
+  pinMode(pin_lcd_e, OUTPUT);
+  pinMode(pin_lcd_d4, OUTPUT);
+  pinMode(pin_lcd_d5, OUTPUT);
+  pinMode(pin_lcd_d6, OUTPUT);
+  pinMode(pin_lcd_d7, OUTPUT);
+  lcd.begin(16, 2);
+}
+
+void init_shiftin() {
+  shiftin_master[0] = 0; // Reference number;
+  shiftin_master[1] = 0; // Data retrieved from register 1
+  shiftin_master[2] = 0; // Data retrieved from register 2
+  shiftin_master[3] = 9; // Data
+  shiftin_master[4] = 10; // Latch
+  shiftin_master[5] = 11; // Clock
+  pinMode(shiftin_master[3], INPUT); // Data pin
+  pinMode(shiftin_master[4], OUTPUT); // Latch pin
+  pinMode(shiftin_master[5], OUTPUT); // Clock pin
+}
+
+void init_shiftout() {
+  shiftout_master[0] = 0; // Reference number;
+  shiftout_master[1] = 0; // Data sent to register 1
+  shiftout_master[2] = 0; // Data sent to register 2
+  shiftout_master[3] = 38; // Data
+  shiftout_master[4] = 36; // Latch
+  shiftout_master[5] = 34; // Clock
+  pinMode(shiftout_master[3], OUTPUT); // Data pin
+  pinMode(shiftout_master[4], OUTPUT); // Latch pin
+  pinMode(shiftout_master[5], OUTPUT); // Clock pin
+}
+
+void init_button() {
   // Manually set button
   module_master[1][0] = 2;
   module_master[1][1] = 0;
-  module_master[1][2] = 25;
-  module_master[1][3] = 23;
+  module_master[1][2] = 23;
+  module_master[1][3] = 25;
   module_master[1][4] = 33; // Button input
   module_master[1][5] = 27; // LED R
   module_master[1][6] = 29; // LED G
@@ -887,6 +1687,16 @@ void initialisehardware() { // For testing, use the other to dynamically assign 
   pinMode(module_master[1][2], OUTPUT);
   pinMode(module_master[1][3], OUTPUT);
 
+  pinMode(module_master[1][4], INPUT_PULLUP); //Button
+  pinMode(module_master[1][5], OUTPUT);
+  digitalWrite(module_master[1][5], LOW); //RGB LED R
+  pinMode(module_master[1][6], OUTPUT);
+  digitalWrite(module_master[1][6], LOW); //RGB LED G
+  pinMode(module_master[1][7], OUTPUT);
+  digitalWrite(module_master[1][7], LOW); //RGB LED B
+}
+
+void init_swires() {
   // Manually set simple wires
   module_master[2][0] = 3;
   module_master[2][1] = 0;
@@ -898,28 +1708,57 @@ void initialisehardware() { // For testing, use the other to dynamically assign 
   pinMode(module_master[2][2], OUTPUT);
   pinMode(module_master[2][3], OUTPUT);
 
-  pinMode(pin_buzzer, OUTPUT);
-  digitalWrite(pin_buzzer, LOW); //Buzzer
-
-  pinMode(module_master[1][4], INPUT_PULLUP); //Button
-  pinMode(module_master[1][5], OUTPUT);
-  digitalWrite(module_master[1][5], LOW); //RGB LED R
-  pinMode(module_master[1][6], OUTPUT);
-  digitalWrite(module_master[1][6], LOW); //RGB LED G
-  pinMode(module_master[1][7], OUTPUT);
-  digitalWrite(module_master[1][7], LOW); //RGB LED B
-
-  timerdisp.begin(0x70); // Timer uses I2C pins @ 0x70
-  timerdisp.print(10000);
-  timerdisp.writeDisplay();
-
-  lcd.begin(16, 2);
-
   pinMode(module_master[2][4], INPUT); // Data pin
   pinMode(module_master[2][5], OUTPUT); // Latch pin
   pinMode(module_master[2][6], OUTPUT); // Clock pin
+}
+
+void init_simon() {
+  // Manually set Simon
+  module_master[3][0] = 5;
+  module_master[3][1] = 0;
+  module_master[3][2] = 46;
+  module_master[3][3] = 44;
+  module_master[3][4] = 1; // Shift-in register reference number
+  module_master[3][5] = 0; // Bits to count (first 4 bits)
+  module_master[3][6] = 2; // Shift-out register reference number
+  module_master[3][7] = 0; // Bits to count (first 4 bits)
+
+  pinMode(simon_led_r, OUTPUT);
+  pinMode(simon_led_b, OUTPUT);
+  pinMode(simon_led_y, OUTPUT);
+  pinMode(simon_led_g, OUTPUT);
+}
+
+void init_keypad() {
+  // Manually set Keypad
+  module_master[4][0] = 4;
+  module_master[4][1] = 0;
+  module_master[4][2] = 42;
+  module_master[4][3] = 40;
+  module_master[4][4] = 1; // Shift-in register reference number
+  module_master[4][5] = 1; // Bits to count (last 4 bits)
+  module_master[4][6] = 0; // Shift-out register reference number
+  module_master[4][7] = 1; // Bits to count (last 4 bits)
 
 }
+
+//void init_cwires() {
+//  // Manually set Keypad
+//  module_master[5][0] = 6;
+//  module_master[5][1] = 0;
+//  module_master[5][2] = 38;
+//  module_master[5][3] = 36;
+//  module_master[5][4] = 43; // Data
+//  module_master[5][5] = 41; // Latch
+//  module_master[5][6] = 39; // Clock
+//  pinMode(module_master[5][2], OUTPUT);
+//  pinMode(module_master[5][3], OUTPUT);
+//
+//  pinMode(module_master[5][4], INPUT); // Data pin
+//  pinMode(module_master[5][5], OUTPUT); // Latch pin
+//  pinMode(module_master[5][6], OUTPUT); // Clock pin
+//}
 
 /*
   void initialisehardware() {
