@@ -4,14 +4,14 @@
 //
 //======================================================================
 //
-//  version 0.4.0
+//  version 0.5.0
 //
 //  Goal for this version: Firm up game functions, include Simon Says
 //                          and include shift register support for mods
 //
 //======================================================================
 //
-//  Modules supported: Button, Simple wires, Simon says
+//  Modules supported: Button, Simple wires, Simon says (and Keypad)
 //
 //======================================================================
 
